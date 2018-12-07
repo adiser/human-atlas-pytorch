@@ -84,7 +84,7 @@ def validate(model, val_loader, f2_loss, focal_loss, epoch):
         raw_predictions = model(images)
         outputs = raw_predictions.data
         
-        loss = """f2_loss(outputs, label_arrs_cuda)""" + focal_loss(outputs, label_arrs_cuda)
+        loss = f2_loss(outputs, label_arrs_cuda) + focal_loss(outputs, label_arrs_cuda)
         losses.append(loss.data)
         
         predictions = np.arange(28)[raw_predictions.data[0] > 0.15]
