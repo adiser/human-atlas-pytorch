@@ -1,107 +1,19 @@
-from torch.utils.data import Dataset, DataLoader
-import torch
-from torchvision import transforms
-from PIL import Image
-import numpy as np
-import pandas as pd
-import pretrainedmodels
-import time
-import glob
-import os
-from dataset import AtlasData, EvalAtlasData
+import torch 
+import torch.nn as nn
+import pretrainedmodels 
+import numpy as np 
+import time 
+import glob 
 import argparse
-from torch import nn
+import models
+from dataset import AtlasData
+from metrics import *
+from torch.utils.data import Dataset, DataLoader
 
-def construct_rgby_model(model, model_name):
-    modules = list(model.modules())
-    first_conv_idx = list(filter(lambda x: isinstance(modules[x], nn.Conv2d), list(range(len(modules)))))[0]
-    conv_layer = modules[first_conv_idx]
-    container = modules[first_conv_idx - 1]
-
-    params = [x.clone() for x in conv_layer.parameters()]
-    kernel_size = params[0].size()
-    new_kernel_size = kernel_size[:1] + (4, ) + kernel_size[2:]
-    new_kernels = params[0].data.mean(dim=1, keepdim=True).expand(new_kernel_size).contiguous()
-
-    new_conv = nn.Conv2d(4, conv_layer.out_channels,
-                         conv_layer.kernel_size, conv_layer.stride, conv_layer.padding,
-                         bias=True if len(params) == 2 else False)
-    
-    new_conv.weight.data = new_kernels
-    if len(params) == 2:
-        new_conv.bias.data = params[1].data 
-    layer_name = list(container.state_dict().keys())[0][:-7] 
-
-    setattr(container, layer_name, new_conv)
-
-    if 'resnet' in model_name:
-        model.avgpool = nn.AdaptiveAvgPool2d(1)
-    elif 'resnext' in model_name:
-        model.avg_pool = nn.AdaptiveAvgPool2d(1)
-
-    if 'dpn68' in model_name:
-        in_channels = model.last_linear.in_channels
-        kernel_size = model.last_linear.kernel_size
-        model.last_linear = torch.nn.Conv2d(in_channels, 28, kernel_size)
-    else:
-        num_features = model.last_linear.in_features 
-        model.last_linear = torch.nn.Linear(num_features, 28)
-        
-    if glob.glob('{}_rgby_focal_{}*'.format(model_name, split)):
-        pth_file = torch.load('{}_rgby_focal_0.pth.tar'.format(model_name))
-        state_dict = pth_file['state_dict']
-        model.load_state_dict(state_dict)
-        start_epoch = pth_file['epoch']
-
-    return model
-
-def f1_micro(y_true, y_preds, thresh=0.5, eps=1e-20):
-    preds_bin = y_preds > thresh # binary representation from probabilities (not relevant)
-    truepos = preds_bin * y_true
-    
-    p = truepos.sum() / (preds_bin.sum() + eps) # take sums and calculate precision on scalars
-    r = truepos.sum() / (y_true.sum() + eps) # take sums and calculate recall on scalars
-    
-    f1 = 2*p*r / (p+r+eps) # we calculate f1 on scalars
-    return f1
-
-def f1_macro(y_true, y_preds, thresh=0.5, eps=1e-20):
-    preds_bin = y_preds > thresh # binary representation from probabilities (not relevant)
-    truepos = preds_bin * y_true
-
-    p = truepos.sum(axis=0) / (preds_bin.sum(axis=0) + eps) # sum along axis=0 (classes)
-                                                            # and calculate precision array
-    r = truepos.sum(axis=0) / (y_true.sum(axis=0) + eps)    # sum along axis=0 (classes) 
-                                                            #  and calculate recall array
-
-    f1 = 2*p*r / (p+r+eps) # we calculate f1 on arrays
-    return np.mean(f1)
-
-
-class FocalLoss(torch.nn.Module):
-    def __init__(self, gamma=2):
-        super().__init__()
-        self.gamma = gamma
-        
-    def forward(self, input, target):
-        if not (target.size() == input.size()):
-            raise ValueError("Target size ({}) must be the same as input size ({})"
-                             .format(target.size(), input.size()))
-
-        max_val = (-input).clamp(min=0)
-        loss = input - input * target + max_val + \
-            ((-max_val).exp() + (-input - max_val).exp()).log()
-
-        invprobs = torch.nn.functional.logsigmoid(-input * (target * 2.0 - 1.0))
-        loss = (invprobs * self.gamma).exp() * loss
-        
-        return loss.sum(dim=1).mean()
 
 def train_and_val(model_name, split, batch_size, epochs, lr, start_epoch):
-    
-    model = pretrainedmodels.__dict__[model_name](num_classes = 1000)
 
-    model = construct_rgby_model(model, model_name)
+    model = models.construct_rgby_model(model_name, split)
     model.cuda()
 
     train_dataset = AtlasData(split = split, train = True, model = model_name)
@@ -110,14 +22,15 @@ def train_and_val(model_name, split, batch_size, epochs, lr, start_epoch):
     train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
     val_loader = DataLoader(val_dataset, batch_size = 1, shuffle = False)
     
-    log_loss = torch.nn.BCEWithLogitsLoss()
+    f2_loss = SmoothF2Loss()
     focal_loss = FocalLoss()
+
     optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 
     for epoch in range(start_epoch,epochs+1):
         
-        train(model, train_loader, optimizer, log_loss, focal_loss, epoch)
-        avg_loss, f1_score = validate(model, val_loader, log_loss, focal_loss, epoch)
+        train(model, train_loader, optimizer, f2_loss, focal_loss, epoch)
+        avg_loss, f1_score = validate(model, val_loader, f2_loss, focal_loss, epoch)
                     
         if epoch % 10 == 0:
             filename = '{}_rgby_focal_{}_{}.pth.tar'.format(model_name, split, epoch)
@@ -128,7 +41,7 @@ def train_and_val(model_name, split, batch_size, epochs, lr, start_epoch):
         torch.save(state, filename)
 
     
-def train(model, train_loader, optimizer, log_loss, focal_loss, epoch):
+def train(model, train_loader, optimizer, f2_loss, focal_loss, epoch):
     
     model.train()
     start = time.time()
@@ -139,7 +52,7 @@ def train(model, train_loader, optimizer, log_loss, focal_loss, epoch):
 
         outputs = model(images)
 
-        loss = focal_loss(outputs, label_arrs)
+        loss = f2_loss(outputs, label_arrs)
         losses.append(loss.data[0])
         
         optimizer.zero_grad()
@@ -156,7 +69,7 @@ def train(model, train_loader, optimizer, log_loss, focal_loss, epoch):
     print("Average Loss: {}".format(sum(losses)/len(losses)))
             
 
-def validate(model, val_loader, log_loss, focal_loss, epoch):
+def validate(model, val_loader, f2_loss, focal_loss, epoch):
     
     model.eval()
     
@@ -171,7 +84,7 @@ def validate(model, val_loader, log_loss, focal_loss, epoch):
         raw_predictions = model(images)
         outputs = raw_predictions.data
         
-        loss = focal_loss(outputs, label_arrs_cuda) 
+        loss = """f2_loss(outputs, label_arrs_cuda)""" + focal_loss(outputs, label_arrs_cuda)
         losses.append(loss.data)
         
         predictions = np.arange(28)[raw_predictions.data[0] > 0.15]
@@ -197,20 +110,20 @@ def validate(model, val_loader, log_loss, focal_loss, epoch):
 
     return avg_loss, score
     
-    
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--arch', type = str)
-    parser.add_argument('--split', type = int)
+    parser.add_argument('--arch', type = str, choices = models.model_configs.keys())
     args = parser.parse_args()
-
+    
     model_name = args.arch
-    split = args.split
     batch_size = 16
     epochs = 100
     start_epoch = 1
     lr = 0.0001
 
-    train_and_val(model_name, split, batch_size, epochs, lr, start_epoch)
+    for split in range(3):
+        train_and_val(model_name, split, batch_size, epochs, lr, start_epoch)
 
+if __name__ == "__main__":
+    main()
         
