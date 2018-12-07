@@ -3,7 +3,7 @@ model_configs = {'polynet':{
                    'input_mean': [0.485, 0.456, 0.406, 0.406],
                    'input_std' : [0.229, 0.224, 0.225, 0.225]
                     },
-                'resnet50':{
+                'resnet101':{
                    'input_size': 512,
                    'input_mean': [0.485, 0.456, 0.406, 0.406],
                    'input_std' : [0.229, 0.224, 0.225, 0.225]
@@ -17,11 +17,6 @@ model_configs = {'polynet':{
                    'input_size': 512,
                    'input_mean': [0.485, 0.456, 0.406, 0.406],
                    'input_std' : [0.229, 0.224, 0.225, 0.225]
-                    },
-                'nasnetalarge':{
-                   'input_size': 512,
-                   'input_mean': [0.5],
-                   'input_std' : [0.5]
                     },
                 'inceptionresnetv2':{
                    'input_size': 512,
@@ -43,9 +38,4 @@ model_configs = {'polynet':{
                    'input_mean': [0.5],
                    'input_std' : [0.5]
                     },
-                'bninception':{
-                   'input_size': 512,
-                   'input_mean': [0.5],
-                   'input_std' : [0.5]
-                    }
                 }
