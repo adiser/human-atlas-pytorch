@@ -33,7 +33,17 @@ model_configs = {'polynet':{
                    'input_mean': [0.5],
                    'input_std' : [0.5]
                     },
+                'dpn68':{
+                   'input_size': 512,
+                   'input_mean': [0.5],
+                   'input_std' : [0.5]
+                    },
                 'inceptionv4':{
+                   'input_size': 512,
+                   'input_mean': [0.5],
+                   'input_std' : [0.5]
+                    },
+                'bninception':{
                    'input_size': 512,
                    'input_mean': [0.5],
                    'input_std' : [0.5]
