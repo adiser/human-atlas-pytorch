@@ -8,11 +8,11 @@ import pretrainedmodels
 import time
 import glob
 import os
-from dataset import EvalAtlasData
+from dataset import AtlasData, EvalAtlasData
 import argparse
 from torch import nn
 
-def construct_rgby_model(model):
+def construct_rgby_model(model, model_name):
     modules = list(model.modules())
     first_conv_idx = list(filter(lambda x: isinstance(modules[x], nn.Conv2d), list(range(len(modules)))))[0]
     conv_layer = modules[first_conv_idx]
@@ -33,6 +33,12 @@ def construct_rgby_model(model):
     layer_name = list(container.state_dict().keys())[0][:-7] 
 
     setattr(container, layer_name, new_conv)
+
+    if 'resnet' in model_name:
+        model.avgpool = nn.AdaptiveAvgPool2d(1)
+    elif 'resnext' in model_name:
+        model.avg_pool = nn.AdaptiveAvgPool2d(1)
+
     return model
 
 
@@ -81,7 +87,7 @@ class FocalLoss(torch.nn.Module):
 def train_and_val(model_name, split, batch_size, epochs, lr, start_epoch):
     
     model = pretrainedmodels.__dict__[model_name](num_classes = 1000)
-    model = construct_rgby_model(model)
+    model = construct_rgby_model(model, model_name)
             
     num_features = model.last_linear.in_features 
     model.last_linear = torch.nn.Linear(num_features, 28)
