@@ -39,8 +39,21 @@ def construct_rgby_model(model, model_name):
     elif 'resnext' in model_name:
         model.avg_pool = nn.AdaptiveAvgPool2d(1)
 
-    return model
+    if 'dpn68' in model_name:
+        in_channels = model.last_linear.in_channels
+        kernel_size = model.last_linear.kernel_size
+        model.last_linear = torch.nn.Conv2d(in_channels, 28, kernel_size)
+    else:
+        num_features = model.last_linear.in_features 
+        model.last_linear = torch.nn.Linear(num_features, 28)
+        
+    if glob.glob('{}_rgby_focal_{}*'.format(model_name, split)):
+        pth_file = torch.load('{}_rgby_focal_0.pth.tar'.format(model_name))
+        state_dict = pth_file['state_dict']
+        model.load_state_dict(state_dict)
+        start_epoch = pth_file['epoch']
 
+    return model
 
 def f1_micro(y_true, y_preds, thresh=0.5, eps=1e-20):
     preds_bin = y_preds > thresh # binary representation from probabilities (not relevant)
@@ -87,17 +100,8 @@ class FocalLoss(torch.nn.Module):
 def train_and_val(model_name, split, batch_size, epochs, lr, start_epoch):
     
     model = pretrainedmodels.__dict__[model_name](num_classes = 1000)
+
     model = construct_rgby_model(model, model_name)
-            
-    num_features = model.last_linear.in_features 
-    model.last_linear = torch.nn.Linear(num_features, 28)
-    
-    if glob.glob('{}_rgby_focal_{}*'.format(model_name, split)):
-        pth_file = torch.load('{}_rgby_focal_0.pth.tar'.format(model_name))
-        state_dict = pth_file['state_dict']
-        model.load_state_dict(state_dict)
-        start_epoch = pth_file['epoch']
-        
     model.cuda()
 
     train_dataset = AtlasData(split = split, train = True, model = model_name)
