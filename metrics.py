@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 def f1_micro(y_true, y_preds, thresh=0.5, eps=1e-20):
     preds_bin = y_preds > thresh # binary representation from probabilities (not relevant)
     truepos = preds_bin * y_true
